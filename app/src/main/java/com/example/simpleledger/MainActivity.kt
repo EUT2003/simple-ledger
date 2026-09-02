@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.Modifier
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.input.KeyboardType
 import com.example.simpleledger.state.AppState
 import com.example.simpleledger.ui.SettingsScreen
 import com.example.simpleledger.data.ThemePreference
@@ -100,7 +102,12 @@ private val IncomeColor = Color(0xFF28B487)
 private val ExpenseColor = Color(0xFFE85D75)
 
 private fun accountingMonthStart(monthStartDay: Int): Long {
+    return accountingPeriodStart(System.currentTimeMillis(), monthStartDay)
+}
+
+private fun accountingPeriodStart(timeMillis: Long, monthStartDay: Int): Long {
     val calendar = java.util.Calendar.getInstance().apply {
+        timeInMillis = timeMillis
         set(java.util.Calendar.HOUR_OF_DAY, 0)
         set(java.util.Calendar.MINUTE, 0)
         set(java.util.Calendar.SECOND, 0)
@@ -119,41 +126,29 @@ private fun StatisticsScreen(modifier: Modifier = Modifier, state: AppState) {
     val statisticsCurrency = selectedCurrency.takeIf { it in availableCurrencies } ?: state.settings.defaultCurrency
     val statisticsTransactions = state.transactions.filter { it.currency == statisticsCurrency }
     val now = java.util.Calendar.getInstance()
-    fun monthKey(timeMillis: Long): Int {
-        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = timeMillis }
-        return calendar.get(java.util.Calendar.YEAR) * 12 + calendar.get(java.util.Calendar.MONTH)
-    }
-    val currentMonthKey = now.get(java.util.Calendar.YEAR) * 12 + now.get(java.util.Calendar.MONTH)
+    fun monthKey(timeMillis: Long): Long = accountingPeriodStart(timeMillis, state.settings.monthStartDay)
+    val currentMonthKey = accountingMonthStart(state.settings.monthStartDay)
     var selectedMonthKey by remember { mutableStateOf(currentMonthKey) }
     val availableMonthKeys = statisticsTransactions.map { monthKey(it.dateMillis) }.distinct().sorted()
     val displayedMonthKey = selectedMonthKey.takeIf { it in availableMonthKeys }
         ?: availableMonthKeys.lastOrNull()
         ?: currentMonthKey
     val displayedMonthIndex = availableMonthKeys.indexOf(displayedMonthKey)
-    val displayedCalendar = java.util.Calendar.getInstance().apply {
-        set(java.util.Calendar.YEAR, displayedMonthKey / 12)
-        set(java.util.Calendar.MONTH, displayedMonthKey % 12)
-    }
+    val displayedCalendar = java.util.Calendar.getInstance().apply { timeInMillis = displayedMonthKey }
     val shownMonthTransactions = statisticsTransactions.filter { monthKey(it.dateMillis) == displayedMonthKey && !it.isTransfer }
     val incomeCategories = shownMonthTransactions.filter { it.isIncome }.groupBy { it.category }.mapValues { (_, values) -> values.sumOf { it.amount } }
     val expenseCategories = shownMonthTransactions.filterNot { it.isIncome }.groupBy { it.category }.mapValues { (_, values) -> values.sumOf { it.amount } }
     val earliest = statisticsTransactions.minOfOrNull { it.dateMillis }
     val allMonths = if (range == 0 && earliest != null) {
-        val first = java.util.Calendar.getInstance().apply { timeInMillis = earliest }
+        val first = java.util.Calendar.getInstance().apply { timeInMillis = accountingPeriodStart(earliest, state.settings.monthStartDay) }
         max(1, (now.get(java.util.Calendar.YEAR) - first.get(java.util.Calendar.YEAR)) * 12 + now.get(java.util.Calendar.MONTH) - first.get(java.util.Calendar.MONTH) + 1)
     } else range
     val monthlyData = (allMonths - 1 downTo 0).map { offset ->
-        val calendar = java.util.Calendar.getInstance().apply { add(java.util.Calendar.MONTH, -offset) }
-        val year = calendar.get(java.util.Calendar.YEAR)
-        val month = calendar.get(java.util.Calendar.MONTH)
-        val values = statisticsTransactions.filter {
-            if (it.isTransfer) false else {
-                val date = java.util.Calendar.getInstance().apply { timeInMillis = it.dateMillis }
-                date.get(java.util.Calendar.YEAR) == year && date.get(java.util.Calendar.MONTH) == month
-            }
-        }
+        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = currentMonthKey; add(java.util.Calendar.MONTH, -offset) }
+        val periodStart = calendar.timeInMillis
+        val values = statisticsTransactions.filter { !it.isTransfer && monthKey(it.dateMillis) == periodStart }
         MonthlyValue(
-            label = "${month + 1}/${year.toString().takeLast(2)}",
+            label = "${calendar.get(java.util.Calendar.MONTH) + 1}/${calendar.get(java.util.Calendar.YEAR).toString().takeLast(2)}",
             income = values.filter { it.isIncome }.sumOf { it.amount },
             expense = values.filterNot { it.isIncome }.sumOf { it.amount }
         )
@@ -191,7 +186,7 @@ private fun StatisticsScreen(modifier: Modifier = Modifier, state: AppState) {
             }
         }
         if (incomeCategories.isEmpty() && expenseCategories.isEmpty()) {
-            Card { Text(tr(state,"该月暂无账单。","No transactions this month."), Modifier.padding(24.dp)) }
+            Card(modifier = Modifier.fillMaxWidth()) { Text(tr(state,"该月暂无账单。","No transactions this month."), Modifier.padding(24.dp)) }
         } else {
             if (expenseCategories.isNotEmpty()) CategoryDonut(tr(state, "支出分类", "Expense categories"), expenseCategories, false, statisticsCurrency, state)
             if (incomeCategories.isNotEmpty()) CategoryDonut(tr(state, "收入分类", "Income categories"), incomeCategories, true, statisticsCurrency, state)
@@ -416,10 +411,8 @@ private fun AddAccountDialog(state: AppState, onDismiss: () -> Unit, onSave: (St
         title = { Text(t("新增账户", "Add account")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(t("账户名称", "Account name"), style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(name, { name = it }, label = { Text(t("账户名称", "Account name")) })
-                Text(t("初始余额", "Initial balance"), style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(balance, { value -> if (value.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) balance = value }, label = { Text(t("初始余额", "Initial balance")) }, singleLine = true)
+                OutlinedTextField(balance, { value -> if (value.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) balance = value }, label = { Text(t("初始余额", "Initial balance")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 Text(t("币种", "Currency"), style = MaterialTheme.typography.titleMedium)
                 Box {
                     OutlinedButton(
@@ -463,7 +456,7 @@ private fun EditAccountDialog(state: AppState, account: com.example.simpleledger
                     Text(t("该账户已有账单，因此只能修改名称。历史账单会自动显示新名称。", "This account already has transactions, so only its name can be changed. Existing transactions will use the new name automatically."), style = MaterialTheme.typography.bodySmall)
                 } else {
                     Text(t("起始金额", "Initial balance"), style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(value = balance, onValueChange = { value -> if (value.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) balance = value }, label = { Text(t("起始金额", "Initial balance")) }, singleLine = true)
+                    OutlinedTextField(value = balance, onValueChange = { value -> if (value.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) balance = value }, label = { Text(t("起始金额", "Initial balance")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                     Text(t("币种", "Currency"), style = MaterialTheme.typography.titleMedium)
                     Box {
                         OutlinedButton(onClick = { currencyExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("${currencySymbol(currency)}  $currency") }
@@ -673,7 +666,8 @@ private fun EntryDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { value -> if (value.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) amount = value },
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
                 Text(t("币种", "Currency"), style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(value = "${currencySymbol(currency)}  $currency", onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth())
