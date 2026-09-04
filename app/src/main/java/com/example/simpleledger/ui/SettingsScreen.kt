@@ -29,12 +29,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpOffset
 import com.example.simpleledger.state.AppState
+import com.example.simpleledger.BuildConfig
 
 @Composable
 fun SettingsScreen(state: AppState, onBack: () -> Unit) {
     val dialog = remember { mutableStateOf("") }
     val clearConfirmation = remember { mutableStateOf(false) }
     val dayExpanded = remember { mutableStateOf(false) }
+    val versionInfo = remember { mutableStateOf(false) }
     val english = state.settings.language == LanguagePreference.ENGLISH
     fun t(zh:String,en:String)=if(english) en else zh
     fun themeName()=when(state.settings.theme){ThemePreference.SYSTEM->t("跟随系统","System default");ThemePreference.LIGHT->t("亮色","Light");ThemePreference.DARK->t("暗色","Dark")}
@@ -57,9 +59,11 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                 }
             }
         }
+        ListItem(modifier=Modifier.clickable { versionInfo.value=true }, headlineContent = { Text(t("版本信息", "Version information")) }, supportingContent = { Text("v${BuildConfig.VERSION_NAME}") })
         ListItem(modifier=Modifier.clickable { clearConfirmation.value=true }, headlineContent = { Text(t("清空所有数据","Clear all data"), color = MaterialTheme.colorScheme.error) }, supportingContent = { Text(t("恢复为默认状态","Restore default state")) })
     } }
     val options=when(dialog.value){"theme"->if(english) listOf("System default","Light","Dark") else listOf("跟随系统","亮色","暗色");"accent"->if(english) listOf("Red","Orange","Yellow","Blue","Green","Pink","Purple") else listOf("红","橙","黄","蓝","绿","粉","紫");"language"->if(english) listOf("Chinese","English") else listOf("中文","English");"currency"->listOf("CNY","USD","EUR","GBP","JPY","HKD","TWD");else->emptyList()}
     if(options.isNotEmpty()) AlertDialog(onDismissRequest={dialog.value=""},title={Text(t("选择","Select"))},text={LazyColumn(Modifier.heightIn(max=420.dp)){itemsIndexed(options){index,option->TextButton(onClick={when(dialog.value){"theme"->state.updateSettings(state.settings.copy(theme=listOf(ThemePreference.SYSTEM,ThemePreference.LIGHT,ThemePreference.DARK)[index]));"accent"->state.updateSettings(state.settings.copy(accent=AccentPreference.entries[index]));"language"->state.updateSettings(state.settings.copy(language=listOf(LanguagePreference.CHINESE,LanguagePreference.ENGLISH)[index]));"currency"->state.updateSettings(state.settings.copy(defaultCurrency=option))};dialog.value=""}){Text(option)}}}},confirmButton={})
+    if(versionInfo.value) AlertDialog(onDismissRequest={versionInfo.value=false},title={Text(t("版本信息", "Version information"))},text={Text("${t("轻记账", "Simple Ledger")}\n${t("当前版本", "Current version")}: ${BuildConfig.VERSION_NAME}")},confirmButton={TextButton(onClick={versionInfo.value=false}){Text(t("确定", "OK"))}})
     if(clearConfirmation.value) AlertDialog(onDismissRequest={clearConfirmation.value=false},title={Text(t("清空所有数据？","Clear all data?"))},text={Text(t("此操作会删除所有账单和自建账户，并恢复默认设置，且无法撤销。","This deletes all transactions and custom accounts, restores defaults, and cannot be undone."))},confirmButton={TextButton(onClick={state.clearAllData();clearConfirmation.value=false}){Text(t("确认清空","Clear"))}},dismissButton={TextButton(onClick={clearConfirmation.value=false}){Text(t("取消","Cancel"))}})
 }

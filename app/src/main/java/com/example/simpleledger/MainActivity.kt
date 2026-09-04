@@ -98,6 +98,19 @@ private fun currencySymbol(currency: String) = when (currency.uppercase()) {
     else -> currency
 }
 
+private fun transactionDateText(dateMillis: Long, english: Boolean): String {
+    val base = SimpleDateFormat("yy-MM-dd", Locale.getDefault()).format(Date(dateMillis))
+    val difference = System.currentTimeMillis() - dateMillis
+    if (difference !in 0 until 7L * 24 * 60 * 60 * 1000) return base
+    val day = java.util.Calendar.getInstance().apply { timeInMillis = dateMillis }.get(java.util.Calendar.DAY_OF_WEEK)
+    val weekday = if (english) {
+        listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")[day - 1]
+    } else {
+        listOf("周日", "周一", "周二", "周三", "周四", "周五", "周六")[day - 1]
+    }
+    return "$base $weekday"
+}
+
 private val IncomeColor = Color(0xFF28B487)
 private val ExpenseColor = Color(0xFFE85D75)
 
@@ -279,6 +292,8 @@ private fun AccountsScreen(modifier: Modifier = Modifier, state: AppState) {
     var search by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<com.example.simpleledger.data.Account?>(null) }
     var pendingEdit by remember { mutableStateOf<com.example.simpleledger.data.Account?>(null) }
+    var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+    var editingTransaction by remember { mutableStateOf<Transaction?>(null) }
     var selectedAccountId by remember { mutableStateOf<String?>(null) }
     val selectedId = selectedAccountId?.takeIf { id -> state.accounts.any { it.id == id } }
     val selectedAccount = state.accounts.find { it.id == selectedId }
@@ -305,6 +320,7 @@ private fun AccountsScreen(modifier: Modifier = Modifier, state: AppState) {
                     transaction.category,
                     transaction.note,
                     currencySymbol(transaction.currency),
+                    transactionDateText(transaction.dateMillis, state.settings.language == LanguagePreference.ENGLISH),
                     SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(transaction.dateMillis))
                 ).any { it.lowercase().contains(query) }
             }
@@ -362,11 +378,11 @@ private fun AccountsScreen(modifier: Modifier = Modifier, state: AppState) {
         } else {
             filteredTransactions.forEach { item ->
                 val accountName = state.accounts.find { it.id == item.accountId }?.name.orEmpty()
-                Card {
+                Card(modifier = Modifier.fillMaxWidth().clickable { selectedTransaction = item }) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
                             Text(item.note.ifBlank { item.category }, style = MaterialTheme.typography.titleMedium)
-                            Text("${item.category} · $accountName · ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(item.dateMillis))}", style = MaterialTheme.typography.bodySmall)
+                            Text("${item.category} · $accountName · ${transactionDateText(item.dateMillis, state.settings.language == LanguagePreference.ENGLISH)}", style = MaterialTheme.typography.bodySmall)
                         }
                         Text(
                             (if (item.isIncome) "+" else "-") + currencySymbol(item.currency) + String.format("%.2f", item.amount),
@@ -393,6 +409,24 @@ private fun AccountsScreen(modifier: Modifier = Modifier, state: AppState) {
     }
     if (pendingEdit != null) {
         EditAccountDialog(state = state, account = pendingEdit!!, onDismiss = { pendingEdit = null })
+    }
+    if (selectedTransaction != null) {
+        val item = selectedTransaction!!
+        AlertDialog(
+            onDismissRequest = { selectedTransaction = null },
+            title = { Text(tr(state, "账单操作", "Transaction actions")) },
+            text = { Text(tr(state, "可修改或删除这笔账单。", "You can edit or delete this transaction.")) },
+            confirmButton = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = { state.deleteTransaction(item.id); selectedTransaction = null }) { Text(tr(state, "删除", "Delete")) }
+                    TextButton(onClick = { selectedTransaction = null; editingTransaction = item }) { Text(tr(state, "修改", "Edit")) }
+                    TextButton(onClick = { selectedTransaction = null }) { Text(tr(state, "取消", "Cancel")) }
+                }
+            }
+        )
+    }
+    if (editingTransaction != null) {
+        EntryDialog(state = state, existingTransaction = editingTransaction!!, onDismiss = { editingTransaction = null })
     }
 }
 
@@ -542,7 +576,7 @@ private fun HomeScreen(modifier: Modifier = Modifier, state: AppState, onSetting
         if (recent.isEmpty()) Text(tr(state,"还没有账目，点击上方按钮开始记账。","No transactions yet."))
         else recent.forEach { item ->
             val account = state.accounts.find { it.id == item.accountId }?.name ?: ""
-            Card(modifier=Modifier.clickable { selectedTransaction=item }) { Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(item.note.ifBlank { item.category }); Text("${item.category} · $account · ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(item.dateMillis))}", style=MaterialTheme.typography.bodySmall) }; Text((if(item.isIncome) "+" else "-") + currencySymbol(item.currency) + String.format("%.2f", item.amount), color = if (item.isTransfer) MaterialTheme.colorScheme.onSurface else if (item.isIncome) IncomeColor else ExpenseColor) } }
+            Card(modifier=Modifier.clickable { selectedTransaction=item }) { Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(item.note.ifBlank { item.category }); Text("${item.category} · $account · ${transactionDateText(item.dateMillis, state.settings.language == LanguagePreference.ENGLISH)}", style=MaterialTheme.typography.bodySmall) }; Text((if(item.isIncome) "+" else "-") + currencySymbol(item.currency) + String.format("%.2f", item.amount), color = if (item.isTransfer) MaterialTheme.colorScheme.onSurface else if (item.isIncome) IncomeColor else ExpenseColor) } }
         }
     }
     if (showEntry) EntryDialog(state, onDismiss = { showEntry = false })
