@@ -627,16 +627,21 @@ private fun EntryDialog(
     onDismiss: () -> Unit
 ) {
     val accounts = state.accounts.sortedWith(compareBy { it.currency != state.settings.defaultCurrency })
+    val existingTransferItems = existingTransaction?.transferGroupId?.let { groupId ->
+        state.transactions.filter { it.isTransfer && it.transferGroupId == groupId }
+    }.orEmpty()
+    val existingTransferOut = existingTransferItems.find { !it.isIncome }
+    val existingTransferIn = existingTransferItems.find { it.isIncome }
     val context = LocalContext.current
     val english = state.settings.language == LanguagePreference.ENGLISH
     fun t(chinese: String, englishText: String) = if (english) englishText else chinese
     var amount by remember { mutableStateOf(existingTransaction?.amount?.toString().orEmpty()) }
     var category by remember { mutableStateOf(existingTransaction?.category.orEmpty()) }
     var note by remember { mutableStateOf(existingTransaction?.note.orEmpty()) }
-    var accountId by remember { mutableStateOf(existingTransaction?.accountId ?: accounts.firstOrNull()?.id ?: "cash") }
+    var accountId by remember { mutableStateOf(existingTransferOut?.accountId ?: existingTransaction?.accountId ?: accounts.firstOrNull()?.id ?: "cash") }
     var income by remember { mutableStateOf(existingTransaction?.isIncome ?: false) }
     var isTransfer by remember { mutableStateOf(existingTransaction?.isTransfer ?: false) }
-    var toAccountId by remember { mutableStateOf(accounts.firstOrNull { it.id != accountId }?.id.orEmpty()) }
+    var toAccountId by remember { mutableStateOf(existingTransferIn?.accountId ?: accounts.firstOrNull { it.id != accountId }?.id.orEmpty()) }
     var dateMillis by remember { mutableStateOf(existingTransaction?.dateMillis ?: System.currentTimeMillis()) }
     var showCalculator by remember { mutableStateOf(false) }
     var currency by remember { mutableStateOf(existingTransaction?.currency ?: accounts.find { it.id == accountId }?.currency ?: state.settings.defaultCurrency) }
@@ -656,12 +661,26 @@ private fun EntryDialog(
                 if (value <= 0.0) return@TextButton
                 if (isTransfer) {
                     if (toAccountId.isBlank() || toAccountId == accountId) return@TextButton
-                    state.addTransfer(accountId, toAccountId, value, currency, dateMillis)
+                    if (existingTransaction?.isTransfer == true) {
+                        val updated = state.updateTransfer(
+                            existingTransaction.id,
+                            accountId,
+                            toAccountId,
+                            value,
+                            currency,
+                            dateMillis,
+                            note
+                        )
+                        if (!updated) return@TextButton
+                    } else {
+                        if (existingTransaction != null) state.deleteTransaction(existingTransaction.id)
+                        state.addTransfer(accountId, toAccountId, value, currency, dateMillis, note)
+                    }
                     onDismiss()
                     return@TextButton
                 }
                 val transaction = Transaction(
-                        id = existingTransaction?.id ?: UUID.randomUUID().toString(),
+                        id = existingTransaction?.takeUnless { it.isTransfer }?.id ?: UUID.randomUUID().toString(),
                         accountId = accountId,
                         amount = value,
                         isIncome = income,
@@ -670,7 +689,14 @@ private fun EntryDialog(
                         currency = currency,
                         dateMillis = dateMillis
                     )
-                if (existingTransaction == null) state.addTransaction(transaction) else state.updateTransaction(transaction)
+                when {
+                    existingTransaction == null -> state.addTransaction(transaction)
+                    existingTransaction.isTransfer -> {
+                        state.deleteTransaction(existingTransaction.id)
+                        state.addTransaction(transaction)
+                    }
+                    else -> state.updateTransaction(transaction)
+                }
                 onDismiss()
             }) { Text(t("保存", "Save")) }
         },

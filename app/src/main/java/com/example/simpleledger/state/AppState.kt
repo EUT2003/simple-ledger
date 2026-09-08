@@ -58,13 +58,62 @@ class AppState(private val storage: LedgerStorage) {
     }
 
     fun addTransaction(value: Transaction) { transactions += value; storage.saveTransactions(transactions) }
-    fun addTransfer(fromAccountId: String, toAccountId: String, amount: Double, currency: String, dateMillis: Long) {
+    fun addTransfer(fromAccountId: String, toAccountId: String, amount: Double, currency: String, dateMillis: Long, note: String = "") {
         if (fromAccountId == toAccountId || amount <= 0.0) return
         if (accounts.find { it.id == fromAccountId }?.currency != currency || accounts.find { it.id == toAccountId }?.currency != currency) return
         val groupId = UUID.randomUUID().toString()
-        transactions += Transaction(UUID.randomUUID().toString(), fromAccountId, amount, false, "转账", currency = currency, dateMillis = dateMillis, isTransfer = true, transferGroupId = groupId)
-        transactions += Transaction(UUID.randomUUID().toString(), toAccountId, amount, true, "转账", currency = currency, dateMillis = dateMillis, isTransfer = true, transferGroupId = groupId)
+        transactions += Transaction(UUID.randomUUID().toString(), fromAccountId, amount, false, "转账", note = note, currency = currency, dateMillis = dateMillis, isTransfer = true, transferGroupId = groupId)
+        transactions += Transaction(UUID.randomUUID().toString(), toAccountId, amount, true, "转账", note = note, currency = currency, dateMillis = dateMillis, isTransfer = true, transferGroupId = groupId)
         storage.saveTransactions(transactions)
+    }
+
+    fun updateTransfer(
+        transactionId: String,
+        fromAccountId: String,
+        toAccountId: String,
+        amount: Double,
+        currency: String,
+        dateMillis: Long,
+        note: String
+    ): Boolean {
+        if (fromAccountId == toAccountId || amount <= 0.0) return false
+        if (accounts.find { it.id == fromAccountId }?.currency != currency ||
+            accounts.find { it.id == toAccountId }?.currency != currency
+        ) return false
+
+        val selected = transactions.find { it.id == transactionId } ?: return false
+        val groupId = selected.transferGroupId ?: return false
+        val transferItems = transactions.filter { it.isTransfer && it.transferGroupId == groupId }
+        val outgoing = transferItems.find { !it.isIncome } ?: return false
+        val incoming = transferItems.find { it.isIncome } ?: return false
+        val outgoingIndex = transactions.indexOfFirst { it.id == outgoing.id }
+        val incomingIndex = transactions.indexOfFirst { it.id == incoming.id }
+        if (outgoingIndex < 0 || incomingIndex < 0) return false
+
+        transactions[outgoingIndex] = outgoing.copy(
+            accountId = fromAccountId,
+            amount = amount,
+            isIncome = false,
+            category = "转账",
+            note = note,
+            currency = currency,
+            dateMillis = dateMillis,
+            isTransfer = true,
+            transferGroupId = groupId
+        )
+        transactions[incomingIndex] = incoming.copy(
+            accountId = toAccountId,
+            amount = amount,
+            isIncome = true,
+            category = "转账",
+            note = note,
+            currency = currency,
+            dateMillis = dateMillis,
+            isTransfer = true,
+            transferGroupId = groupId
+        )
+        storage.saveTransactions(transactions)
+        return true
     }
     fun deleteTransaction(id: String) {
         val item = transactions.find { it.id == id }
